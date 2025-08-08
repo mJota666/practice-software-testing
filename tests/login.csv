@@ -1,0 +1,11 @@
+email,password,expected_status,expect_token
+customer@practicesoftwaretesting.com,welcome01,200,true
+CUSTOMER@PRACTICESOFTWARETESTING.COM,welcome01,200,true
+customer@practicesoftwaretesting.com,WRONGPASS,401,false
+nouser@example.com,welcome01,401,false
+,,400,false
+badformat,anything,400,false
+  customer@practicesoftwaretesting.com  ,welcome01,400,false
+customer@practicesoftwaretesting.com,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,401,false
+customer@practicesoftwaretesting.com,' OR 1=1 --,401,false
+customer@practicesoftwaretesting.com,,400,false

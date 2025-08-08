@@ -1,0 +1,11 @@
+q,expect_empty
+drill,false
+saw,false
+screw,false
+set,false
+zzzzzzzzzzzz,true
+ ,true
+++,true
+%' OR 1=1 --,true
+<script>,true
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,true
