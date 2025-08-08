@@ -23,15 +23,15 @@ jobs:
 
       - name: Run Postman collection - Login
         run: |
-          newman run tests/Toolshop-3API.v1-fixed-schema.postman_collection.json             --folder "Users - Login"             --iteration-data tests/login.csv             --environment tests/environment.json             --reporters cli,htmlextra             --reporter-htmlextra-export test-report-login.html
+          newman run tests/toolshop.postman_collection.json             --folder "Users - Login"             --iteration-data tests/login.csv             --environment tests/environment.json             --reporters cli,htmlextra             --reporter-htmlextra-export test-report-login.html
 
       - name: Run Postman collection - Product Search
         run: |
-          newman run tests/Toolshop-3API.v1-fixed-schema.postman_collection.json             --folder "Products - Search"             --iteration-data tests/product_search.csv             --environment tests/environment.json             --reporters cli,htmlextra             --reporter-htmlextra-export test-report-search.html
+          newman run tests/toolshop.postman_collection.json             --folder "Products - Search"             --iteration-data tests/product_search.csv             --environment tests/environment.json             --reporters cli,htmlextra             --reporter-htmlextra-export test-report-search.html
 
       - name: Run Postman collection - Product By ID
         run: |
-          newman run tests/Toolshop-3API.v1-fixed-schema.postman_collection.json             --folder "Products - Get by Id"             --iteration-data tests/product_by_id.csv             --environment tests/environment.json             --reporters cli,htmlextra             --reporter-htmlextra-export test-report-getid.html
+          newman run tests/toolshop.postman_collection.json             --folder "Products - Get by Id"             --iteration-data tests/product_by_id.csv             --environment tests/environment.json             --reporters cli,htmlextra             --reporter-htmlextra-export test-report-getid.html
 
       - name: Upload Test Reports
         uses: actions/upload-artifact@v4

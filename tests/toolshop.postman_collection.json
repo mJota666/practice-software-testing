@@ -1,0 +1,266 @@
+{
+  "info": {
+    "name": "Toolshop - 3 APIs (Data-Driven) [V1 Fixed + Schema/Perf]",
+    "_postman_id": "d3f3d8a0-aaaa-bbbb-cccc-000000000004",
+    "description": "V1 style with Pre-request (CSV-driven) + Schema & Performance checks in Tests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Users - Login",
+      "item": [
+        {
+          "name": "POST /users/login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "type": "text",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"{{email}}\",\"password\":\"{{password}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// CSV-aware Pre-request: uses pm.iterationData.get(...)",
+                  "const D = pm.iterationData && typeof pm.iterationData.get === 'function' ? pm.iterationData : null;",
+                  "",
+                  "// Fallback baseUrl if no environment selected",
+                  "if (!pm.environment.get('baseUrl') && !pm.variables.get('baseUrl')) {",
+                  "  pm.variables.set('baseUrl', 'http://localhost:8091');",
+                  "}",
+                  "",
+                  "// Map CSV columns -> variables",
+                  "if (D) {",
+                  "  pm.variables.set('email', D.get('email'));",
+                  "  pm.variables.set('password', D.get('password'));",
+                  "  pm.variables.set('expected_status', D.get('expected_status'));",
+                  "  pm.variables.set('expect_token', D.get('expect_token'));",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Performance check",
+                  "pm.test('Response time < 800ms', () => pm.expect(pm.response.responseTime).to.be.below(800));",
+                  "",
+                  "// Data-driven status",
+                  "const hasData = pm.iterationData && typeof pm.iterationData.get === 'function';",
+                  "const expected = hasData ? parseInt(pm.iterationData.get('expected_status')) : 200;",
+                  "const expectToken = hasData ? (pm.iterationData.get('expect_token') + '').toLowerCase() === 'true' : true;",
+                  "pm.test('Status matches expected', () => pm.response.to.have.status(expected));",
+                  "",
+                  "// Schema check for success payload",
+                  "if (pm.response.code === 200 && expectToken) {",
+                  "  const schema = {",
+                  "    type: 'object',",
+                  "    required: ['access_token','token_type','expires_in'],",
+                  "    properties: {",
+                  "      access_token: { type: 'string' },",
+                  "      token_type: { const: 'Bearer' },",
+                  "      expires_in: { type: 'number' }",
+                  "    }",
+                  "  };",
+                  "  pm.test('Schema OK', () => pm.response.to.have.jsonSchema(schema));",
+                  "  const body = pm.response.json();",
+                  "  pm.environment.set('authToken', body.access_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Products - Search",
+      "item": [
+        {
+          "name": "GET /products/search",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/products/search?q={{q}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "{{q}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// CSV-aware Pre-request: uses pm.iterationData.get(...)",
+                  "const D = pm.iterationData && typeof pm.iterationData.get === 'function' ? pm.iterationData : null;",
+                  "",
+                  "// Fallback baseUrl if no environment selected",
+                  "if (!pm.environment.get('baseUrl') && !pm.variables.get('baseUrl')) {",
+                  "  pm.variables.set('baseUrl', 'http://localhost:8091');",
+                  "}",
+                  "",
+                  "if (D) {",
+                  "  pm.variables.set('q', D.get('q'));",
+                  "  pm.variables.set('expect_empty', D.get('expect_empty'));",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Performance",
+                  "pm.test('Response time < 800ms', () => pm.expect(pm.response.responseTime).to.be.below(800));",
+                  "",
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response is JSON', () => { pm.response.to.be.withBody; pm.response.to.be.json; });",
+                  "const body = pm.response.json();",
+                  "",
+                  "// Schema (paginated) minimal",
+                  "const schema = {",
+                  "  type: 'object',",
+                  "  required: ['data','current_page','total'],",
+                  "  properties: {",
+                  "    data: { type: 'array', items: {",
+                  "      type: 'object',",
+                  "      required: ['id','name','price'],",
+                  "      properties: { id:{type:'number'}, name:{type:'string'}, price:{type:'number'} }",
+                  "    }},",
+                  "    current_page: { type: 'number' },",
+                  "    total: { type: 'number' }",
+                  "  }",
+                  "};",
+                  "pm.test('Schema OK', () => pm.response.to.have.jsonSchema(schema));",
+                  "",
+                  "pm.test('Has data array', () => pm.expect(body).to.have.property('data').that.is.an('array'));",
+                  "const hasData = pm.iterationData && typeof pm.iterationData.get === 'function';",
+                  "const expectEmpty = hasData ? (pm.iterationData.get('expect_empty') + '').toLowerCase() === 'true' : false;",
+                  "pm.test('Empty/non-empty as expected', () => {",
+                  "  if (expectEmpty) pm.expect(body.data.length).to.eql(0);",
+                  "  else pm.expect(body.data.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Products - Get by Id",
+      "item": [
+        {
+          "name": "GET /products/{productId}",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{productId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// CSV-aware Pre-request: uses pm.iterationData.get(...)",
+                  "const D = pm.iterationData && typeof pm.iterationData.get === 'function' ? pm.iterationData : null;",
+                  "",
+                  "// Fallback baseUrl if no environment selected",
+                  "if (!pm.environment.get('baseUrl') && !pm.variables.get('baseUrl')) {",
+                  "  pm.variables.set('baseUrl', 'http://localhost:8091');",
+                  "}",
+                  "",
+                  "if (D) {",
+                  "  pm.variables.set('productId', D.get('productId'));",
+                  "  pm.variables.set('expected_status', D.get('expected_status'));",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Performance",
+                  "pm.test('Response time < 800ms', () => pm.expect(pm.response.responseTime).to.be.below(800));",
+                  "",
+                  "// Status (data-driven)",
+                  "const hasData = pm.iterationData && typeof pm.iterationData.get === 'function';",
+                  "const expected = hasData ? parseInt(pm.iterationData.get('expected_status')) : 200;",
+                  "pm.test('Status matches expected', () => pm.response.to.have.status(expected));",
+                  "",
+                  "// Schema (ProductResponse minimal) when 200",
+                  "if (pm.response.code === 200) {",
+                  "  const schema = {",
+                  "    type: 'object',",
+                  "    required: ['id','name','price'],",
+                  "    properties: {",
+                  "      id: { type: 'number' },",
+                  "      name: { type: 'string' },",
+                  "      price: { type: 'number' },",
+                  "      brand: { type: 'object' },",
+                  "      category: { type: 'object' }",
+                  "    }",
+                  "  };",
+                  "  pm.test('Schema OK (ProductResponse)', () => pm.response.to.have.jsonSchema(schema));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8091"
+    }
+  ]
+}
