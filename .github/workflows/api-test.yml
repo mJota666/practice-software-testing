@@ -6,7 +6,6 @@ on:
   pull_request:
     branches: [main]
 
-# Cần cho GitHub Pages
 permissions:
   contents: read
   pages: write
@@ -20,7 +19,6 @@ jobs:
   run-api-tests:
     runs-on: ubuntu-latest
 
-    # Hiện link Pages ngay trong trang run (khi có deploy)
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -37,6 +35,9 @@ jobs:
       - name: Install Newman
         run: npm install -g newman newman-reporter-htmlextra
 
+      - name: Prepare reports folder
+        run: mkdir -p reports
+
       - name: Run Postman collection - Login
         continue-on-error: true
         run: |
@@ -44,8 +45,9 @@ jobs:
             --folder "Users - Login" \
             --iteration-data tests/login.csv \
             --environment tests/environment.json \
+            --export-environment tests/environment.json \
             --reporters cli,htmlextra \
-            --reporter-htmlextra-export test-report-login.html
+            --reporter-htmlextra-export reports/test-report-login.html
 
       - name: Run Postman collection - Product Search
         continue-on-error: true
@@ -55,7 +57,7 @@ jobs:
             --iteration-data tests/product_search.csv \
             --environment tests/environment.json \
             --reporters cli,htmlextra \
-            --reporter-htmlextra-export test-report-search.html
+            --reporter-htmlextra-export reports/test-report-search.html
 
       - name: Run Postman collection - Product By ID
         continue-on-error: true
@@ -65,32 +67,43 @@ jobs:
             --iteration-data tests/product_by_id.csv \
             --environment tests/environment.json \
             --reporters cli,htmlextra \
-            --reporter-htmlextra-export test-report-getid.html
+            --reporter-htmlextra-export reports/test-report-getid.html
 
-      # Artifact để xem trong PR / Actions
+      # Artifacts để xem trong PR / Actions
       - name: Upload Test Reports (Artifacts)
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: api-test-reports
-          path: "*.html"
+          path: reports/*.html
           if-no-files-found: warn
 
-      # Deploy GitHub Pages (chỉ khi push main) — vẫn chạy dù test fail để có trang report
+      # --- Deploy GitHub Pages (chỉ khi push main) ---
+      - name: Configure GitHub Pages
+        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/configure-pages@v5
+
       - name: Prepare Pages content
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        shell: bash
         run: |
+          set -e
           mkdir -p public
-          mv *.html public/ || true
-          # tạo index đơn giản để dễ bấm xem report
+          shopt -s nullglob
+          cp -r reports/*.html public/ 2>/dev/null || true
+
+          # Tạo index liệt kê link tới tất cả report
           {
             echo '<html><head><meta charset="utf-8"><title>API Test Reports</title></head><body><h1>API Test Reports</h1><ul>'
             for f in public/*.html; do
               base="$(basename "$f")"
-              [ "$base" = "index.html" ] || echo "<li><a href=\"$base\">$base</a></li>"
+              [[ "$base" == "index.html" ]] || echo "<li><a href=\"$base\">$base</a></li>"
             done
             echo '</ul></body></html>'
           } > public/index.html
+
+          echo "Files to publish:"
+          ls -lah public || true
 
       - name: Upload Pages artifact
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
