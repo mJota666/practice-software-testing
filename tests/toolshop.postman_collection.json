@@ -46,7 +46,7 @@
                   "",
                   "// Fallback baseUrl if no environment selected",
                   "if (!pm.environment.get('baseUrl') && !pm.variables.get('baseUrl')) {",
-                  "  pm.variables.set('baseUrl', 'https://fa561e0f649e.ngrok-free.app');",
+                  "  pm.variables.set('baseUrl', 'https://a94197360d94.ngrok-free.app');",
                   "}",
                   "",
                   "// Map CSV columns -> variables",
