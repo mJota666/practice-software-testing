@@ -1,6 +1,6 @@
 {
   "info": {
-    "name": "Toolshop - 3 APIs (Data-Driven) [V1 Fixed + Schema/Perf]",
+    "name": "Toolshop - 3 APIs (Data-Driven)",
     "_postman_id": "d3f3d8a0-aaaa-bbbb-cccc-000000000004",
     "description": "V1 style with Pre-request (CSV-driven) + Schema & Performance checks in Tests.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -46,7 +46,7 @@
                   "",
                   "// Fallback baseUrl if no environment selected",
                   "if (!pm.environment.get('baseUrl') && !pm.variables.get('baseUrl')) {",
-                  "  pm.variables.set('baseUrl', 'http://localhost:8091');",
+                  "  pm.variables.set('baseUrl', 'https://fa561e0f649e.ngrok-free.app');",
                   "}",
                   "",
                   "// Map CSV columns -> variables",

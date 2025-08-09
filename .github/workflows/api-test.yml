@@ -6,9 +6,24 @@ on:
   pull_request:
     branches: [main]
 
+# Cần cho GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
 jobs:
   run-api-tests:
     runs-on: ubuntu-latest
+    # Hiện link Pages ngay trong trang run (khi có deploy)
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -23,18 +38,52 @@ jobs:
 
       - name: Run Postman collection - Login
         run: |
-          newman run tests/toolshop.postman_collection.json             --folder "Users - Login"             --iteration-data tests/login.csv             --environment tests/environment.json             --reporters cli,htmlextra             --reporter-htmlextra-export test-report-login.html
+          newman run tests/toolshop.postman_collection.json \
+            --folder "Users - Login" \
+            --iteration-data tests/login.csv \
+            --environment tests/environment.json \
+            --reporters cli,htmlextra \
+            --reporter-htmlextra-export test-report-login.html
 
       - name: Run Postman collection - Product Search
         run: |
-          newman run tests/toolshop.postman_collection.json             --folder "Products - Search"             --iteration-data tests/product_search.csv             --environment tests/environment.json             --reporters cli,htmlextra             --reporter-htmlextra-export test-report-search.html
+          newman run tests/toolshop.postman_collection.json \
+            --folder "Products - Search" \
+            --iteration-data tests/product_search.csv \
+            --environment tests/environment.json \
+            --reporters cli,htmlextra \
+            --reporter-htmlextra-export test-report-search.html
 
       - name: Run Postman collection - Product By ID
         run: |
-          newman run tests/toolshop.postman_collection.json             --folder "Products - Get by Id"             --iteration-data tests/product_by_id.csv             --environment tests/environment.json             --reporters cli,htmlextra             --reporter-htmlextra-export test-report-getid.html
+          newman run tests/toolshop.postman_collection.json \
+            --folder "Products - Get by Id" \
+            --iteration-data tests/product_by_id.csv \
+            --environment tests/environment.json \
+            --reporters cli,htmlextra \
+            --reporter-htmlextra-export test-report-getid.html
 
-      - name: Upload Test Reports
+      # Artifact để xem trong PR / Actions
+      - name: Upload Test Reports (Artifacts)
         uses: actions/upload-artifact@v4
         with:
           name: api-test-reports
           path: "*.html"
+
+      # Deploy GitHub Pages chỉ khi push lên main
+      - name: Prepare Pages content
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p public
+          mv test-report-*.html public/
+
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: deployment
+        uses: actions/deploy-pages@v4
