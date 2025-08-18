@@ -24,14 +24,14 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     env:
-      # API Web (nginx/apache) được map 8091:80 trong compose
+      # API Web (web service map 8091:80)
       BASE_URL: http://localhost:8091
       # Repo & đường dẫn sprint5-with-bugs của Toolshop
       SUT_REPO: https://github.com/testsmith-io/practice-software-testing.git
       SUT_DIR: sut/practice-software-testing/sprint5-with-bugs
 
     steps:
-      # --- Repo hiện tại: chứa Postman collection, data, v.v. ---
+      # === Repo hiện tại: chứa Postman collection, CSV data, v.v. ===
       - name: Checkout tests repo (this repo)
         uses: actions/checkout@v4
 
@@ -47,7 +47,7 @@ jobs:
       - name: Create reports folder
         run: mkdir -p reports
 
-      # --- Lấy & chạy SUT (Toolshop / sprint5-with-bugs) ---
+      # === Lấy & chạy SUT (Toolshop / sprint5-with-bugs) ===
       - name: Clone Toolshop SUT
         run: |
           mkdir -p sut
@@ -71,8 +71,7 @@ jobs:
           docker compose up -d --build
           docker compose ps
 
-      # (Tuỳ dự án) cài vendor PHP nếu cần — service 'composer' đã được định nghĩa trong compose của bạn
-      - name: Composer install (optional but recommended)
+      - name: Composer install (optional)
         working-directory: ${{ env.SUT_DIR }}
         run: |
           docker compose run --rm composer || true
@@ -96,10 +95,9 @@ jobs:
         shell: bash
         run: |
           set -e
-          # Đợi port mở
           npx wait-on tcp:8091
-          # Thử lần lượt các endpoint phổ biến (tuỳ dự án bạn có thể đổi lại)
-          for url in "$BASE_URL/api/health" "$BASE_URL/api/products" "$BASE_URL/"; do
+          # Probe một số endpoint phổ biến; chỉnh lại nếu dự án có health cụ thể
+          for url in "$BASE_URL/products/1" "$BASE_URL/"; do
             echo "Probing $url ..."
             if npx wait-on --httpTimeout 300000 --interval 1000 "$url"; then
               echo "SUT HTTP is up at: $url"
@@ -109,41 +107,60 @@ jobs:
           echo "ERROR: SUT did not become ready on expected endpoints." >&2
           exit 1
 
-      # --- Chạy Newman (không dùng environment.json) ---
-      # Nếu collection bạn dùng URL tuyệt đối, có thể bỏ hẳn --env-var baseUrl
-      - name: Run Postman collection - Product Search
+      - name: Sanity check endpoints
+        run: |
+          curl -i ${BASE_URL}/products/1 | tee reports/curl-products-1.txt
+
+      # === Newman: bật Login trước, lưu token vào tests/environment.json ===
+      - name: Ensure Postman environment (for token sharing)
+        run: |
+          mkdir -p tests
+          cat > tests/environment.json <<'JSON'
+          {
+            "id": "ci-env",
+            "name": "CI Environment",
+            "values": [
+              { "key": "baseUrl", "value": "", "enabled": true },
+              { "key": "authToken", "value": "", "enabled": true }
+            ]
+          }
+          JSON
+          # set baseUrl từ env CI
+          node -e "let f=require('./tests/environment.json'); f.values.find(v=>v.key==='baseUrl').value=process.env.BASE_URL; require('fs').writeFileSync('./tests/environment.json', JSON.stringify(f,null,2));"
+          cat tests/environment.json
+
+      - name: Run Postman - Login (export token)
+        continue-on-error: false
+        run: |
+          newman run tests/toolshop.postman_collection.json \
+            --folder "Users - Login" \
+            --iteration-data tests/login.csv \
+            --environment tests/environment.json \
+            --export-environment tests/environment.json \
+            --reporters cli,htmlextra \
+            --reporter-htmlextra-export reports/test-report-login.html
+
+      - name: Run Postman - Product Search
         continue-on-error: true
         run: |
           newman run tests/toolshop.postman_collection.json \
             --folder "Products - Search" \
             --iteration-data tests/product_search.csv \
-            --env-var baseUrl=${BASE_URL} \
+            --environment tests/environment.json \
             --reporters cli,htmlextra \
             --reporter-htmlextra-export reports/test-report-search.html
 
-      - name: Run Postman collection - Product By ID
+      - name: Run Postman - Product By ID
         continue-on-error: true
         run: |
           newman run tests/toolshop.postman_collection.json \
             --folder "Products - Get by Id" \
             --iteration-data tests/product_by_id.csv \
-            --env-var baseUrl=${BASE_URL} \
+            --environment tests/environment.json \
             --reporters cli,htmlextra \
             --reporter-htmlextra-export reports/test-report-getid.html
 
-      # (Tuỳ chọn) Nếu bạn vẫn muốn giữ test Login, có thể bật block này
-      - name: Run Postman collection - Login (optional)
-        if: ${{ false }} # đổi thành true nếu muốn chạy
-        continue-on-error: true
-        run: |
-          newman run tests/toolshop.postman_collection.json \
-            --folder "Users - Login" \
-            --iteration-data tests/login.csv \
-            --env-var baseUrl=${BASE_URL} \
-            --reporters cli,htmlextra \
-            --reporter-htmlextra-export reports/test-report-login.html
-
-      # --- Logs & teardown ---
+      # === Logs & teardown ===
       - name: Docker logs (for debugging)
         if: ${{ always() }}
         working-directory: ${{ env.SUT_DIR }}
@@ -157,7 +174,7 @@ jobs:
         run: |
           docker compose down -v
 
-      # --- Artifacts & GitHub Pages ---
+      # === Artifacts & GitHub Pages ===
       - name: Upload Test Reports (Artifacts)
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
