@@ -27,6 +27,7 @@ jobs:
       BASE_URL: http://localhost:8091
       SUT_REPO: https://github.com/testsmith-io/practice-software-testing.git
       SUT_DIR: sut/practice-software-testing/sprint5-with-bugs
+      SPRINT: sprint5-with-bugs # 👈 dùng cho override
       DISABLE_LOGGING: "false"
 
     steps:
@@ -61,7 +62,7 @@ jobs:
           echo "=== .env (if present) ==="
           test -f .env && sed -n '1,120p' .env || echo "WARNING: .env not found"
 
-      # OVERRIDE: share code with web so both see vendor/
+      # OVERRIDE: cho 'web' dùng đúng bind mount code như 'laravel-api'
       - name: Create docker-compose.override.yml (share code with web)
         working-directory: ${{ env.SUT_DIR }}
         run: |
@@ -80,7 +81,7 @@ jobs:
           docker compose up -d --build
           docker compose ps
 
-      # Composer install (install unzip inside composer container) + retry
+      # Composer install (cài unzip trong container composer) + retry
       - name: Composer install (populate vendor)
         working-directory: ${{ env.SUT_DIR }}
         env:
@@ -110,11 +111,37 @@ jobs:
             chmod -R 775 /var/www
           '
 
+      # Kiểm tra vendor ở cả 2 container, KHÔNG fail sớm
       - name: Verify vendor exists
         working-directory: ${{ env.SUT_DIR }}
         run: |
-          docker compose exec -T laravel-api sh -c 'if [ -f vendor/autoload.php ]; then echo "vendor OK in laravel-api"; else echo "NO vendor in laravel-api"; ls -lah vendor || true; exit 2; fi'
-          docker compose exec -T web        sh -c 'if [ -f vendor/autoload.php ]; then echo "vendor OK in web";        else echo "NO vendor in web";        ls -lah vendor || true; exit 2; fi'
+          set +e
+          docker compose exec -T laravel-api sh -c 'if [ -f vendor/autoload.php ]; then echo "vendor OK in laravel-api"; else echo "NO vendor in laravel-api"; fi'
+          docker compose exec -T web        sh -c 'if [ -f vendor/autoload.php ]; then echo "vendor OK in web";        else echo "NO vendor in web";        fi'
+          set -e
+
+      # Fallback: nếu web chưa có vendor thì sync từ laravel-api
+      - name: Sync vendor to web (fallback)
+        working-directory: ${{ env.SUT_DIR }}
+        run: |
+          set -e
+          if ! docker compose exec -T web sh -c 'test -f /var/www/vendor/autoload.php'; then
+            echo "Syncing vendor/ from laravel-api -> web ..."
+            if docker compose exec -T laravel-api sh -c 'command -v tar >/dev/null 2>&1' && docker compose exec -T web sh -c 'command -v tar >/dev/null 2>&1'; then
+              docker compose exec -T laravel-api sh -c 'cd /var/www && tar cf - vendor' | docker compose exec -T web sh -c 'cd /var/www && rm -rf vendor && tar xf -'
+            else
+              LA=$(docker compose ps -q laravel-api)
+              WEB=$(docker compose ps -q web)
+              rm -rf vendor_tmp
+              docker cp "$LA:/var/www/vendor" vendor_tmp
+              docker compose exec -T web sh -c 'rm -rf /var/www/vendor'
+              docker cp vendor_tmp "$WEB:/var/www/"
+              rm -rf vendor_tmp
+            fi
+            docker compose exec -T web sh -c 'ls -lah /var/www/vendor | head -n 20 || true'
+          else
+            echo "web already has vendor/"
+          fi
 
       - name: Seed database (migrate:fresh --seed) with retry
         working-directory: ${{ env.SUT_DIR }}
@@ -167,7 +194,7 @@ jobs:
           node -e "let f=require('./tests/environment.json'); f.values.find(v=>v.key==='baseUrl').value=process.env.BASE_URL; require('fs').writeFileSync('./tests/environment.json', JSON.stringify(f,null,2));"
           cat tests/environment.json
 
-      # ==== Newman: Login trước (ghi token), rồi các API khác ====
+      # ==== Newman: Login trước (ghi token), sau đó chạy các API ====
       - name: Run Postman - Login (export token)
         continue-on-error: false
         run: |
