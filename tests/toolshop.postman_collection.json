@@ -8,19 +8,7 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "https://1524da12d72f.ngrok-free.app"
-    }
-  ],
-  "event": [
-    {
-      "listen": "prerequest",
-      "script": {
-        "type": "text/javascript",
-        "exec": [
-          "const auth = pm.environment.get('auth_header');",
-          "if (auth) { pm.request.headers.upsert({ key: 'Authorization', value: auth }); }"
-        ]
-      }
+      "value": "http://localhost:8091"
     }
   ],
   "item": [
@@ -140,7 +128,7 @@
                   "pm.test('Contract: schema OK (search)', ()=> pm.expect(body).to.have.jsonSchema(ContractSchema));",
                   "pm.test('Has data array', ()=> pm.expect(body).to.have.property('data').that.is.an('array'));",
                   "const expectEmpty = String(pm.iterationData.get('expect_empty') || '').toLowerCase();",
-                  "pm.test('Empty/non-empty as expected', ()=> { const len = (body.data||[]).length; if (expectEmpty==='true') pm.expect(len).to.eql(0); else if (expectEmpty==='false') pm.expect(len).to.be.greaterThan(0); else pm.expect(len).to.be.at.least(0); });",
+                  "pm.test('Empty/non-empty as expected', ()=> { const len = (body.data||[]).length; if (expectEmpty==='true') pm.expect(len).to.eql(0); else if (expectEmpty==='false') pm.expect(len).to.be.greaterThan(0); else pm.expect(len).to.be.at_least(0); });",
                   "const enableQC = String(pm.environment.get('enable_quality_checks')||'false').toLowerCase()==='true';",
                   "if (enableQC) { let missing=[]; (body.data||[]).forEach((p,i)=>{ if (!p.brand) missing.push(`data[${i}].brand missing`); if (!p.category) missing.push(`data[${i}].category missing`); if (!(p.product_image && p.product_image.created_at)) missing.push(`data[${i}].product_image.created_at missing`); }); pm.test('Quality: brand/category/image.created_at present for all items', ()=> pm.expect(missing, missing.join('\\n')).to.eql([])); } else { console.log('Quality checks skipped. Set env enable_quality_checks=true to enable.'); }"
                 ]

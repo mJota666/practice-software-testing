@@ -29,7 +29,7 @@ jobs:
       # Repo & đường dẫn Toolshop (SUT)
       SUT_REPO: https://github.com/testsmith-io/practice-software-testing.git
       SUT_DIR: sut/practice-software-testing/sprint5-with-bugs
-      SPRINT: sprint5-with-bugs # dùng cho override
+      SPRINT: sprint5-with-bugs
       DISABLE_LOGGING: "false"
 
     steps:
