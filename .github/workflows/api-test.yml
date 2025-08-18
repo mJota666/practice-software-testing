@@ -24,16 +24,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     env:
-      # Web reverse proxy map 8091:80
       BASE_URL: http://localhost:8091
-      # Repo & đường dẫn Toolshop (SUT)
       SUT_REPO: https://github.com/testsmith-io/practice-software-testing.git
       SUT_DIR: sut/practice-software-testing/sprint5-with-bugs
-      # Tránh warning compose
       DISABLE_LOGGING: "false"
 
     steps:
-      # === Repo hiện tại: chứa Postman collection, CSV data, v.v. ===
       - name: Checkout tests repo (this repo)
         uses: actions/checkout@v4
 
@@ -49,7 +45,7 @@ jobs:
       - name: Create reports folder
         run: mkdir -p reports
 
-      # === Lấy & chạy SUT (Toolshop / sprint5-with-bugs) ===
+      # ==== SUT ====
       - name: Clone Toolshop SUT
         run: |
           mkdir -p sut
@@ -60,14 +56,12 @@ jobs:
         working-directory: ${{ env.SUT_DIR }}
         shell: bash
         run: |
-          # Copy file mẫu nếu có (không lỗi nếu thiếu)
           cp docker-compose.example.yml docker-compose.yml 2>/dev/null || true
-          echo "=== Listing SUT dir ==="
-          ls -lah
-          echo "=== Show .env (from repo) if present ==="
+          echo "=== Listing SUT dir ==="; ls -lah
+          echo "=== .env (if present) ==="
           test -f .env && sed -n '1,120p' .env || echo "WARNING: .env not found"
 
-      # OVERRIDE: cho 'web' dùng chung bind mount với 'laravel-api' để cùng thấy vendor/
+      # OVERRIDE: share code with web so both see vendor/
       - name: Create docker-compose.override.yml (share code with web)
         working-directory: ${{ env.SUT_DIR }}
         run: |
@@ -75,7 +69,6 @@ jobs:
           services:
             web:
               volumes:
-                # Dùng cùng bind mount source code như laravel-api
                 - ./${SPRINT}/API:/var/www:cached
           YML
           echo "=== docker-compose.override.yml ==="
@@ -87,17 +80,16 @@ jobs:
           docker compose up -d --build
           docker compose ps
 
-      # Cài vendor cho Laravel (bên trong container composer), có cài unzip + retry
-      - name: Composer install (populate vendor in shared bind mount)
+      # Composer install (install unzip inside composer container) + retry
+      - name: Composer install (populate vendor)
         working-directory: ${{ env.SUT_DIR }}
         env:
           COMPOSER_ALLOW_SUPERUSER: "1"
           COMPOSER_NO_INTERACTION: "1"
           COMPOSER_MAX_PARALLEL_HTTP: "5"
         run: |
-          docker compose run --rm composer sh -lc '
+          docker compose run --rm composer sh -c '
             set -e
-            # Cài unzip/ca-certs theo base image
             if command -v apt-get >/dev/null 2>&1; then
               apt-get update && apt-get install -y --no-install-recommends unzip ca-certificates && rm -rf /var/lib/apt/lists/*
             elif command -v apk >/dev/null 2>&1; then
@@ -105,12 +97,7 @@ jobs:
             fi
 
             run_install() {
-              composer install \
-                --no-dev \
-                --optimize-autoloader \
-                --prefer-dist \
-                --no-progress \
-                --ignore-platform-req=ext-ffi
+              composer install --no-dev --optimize-autoloader --prefer-dist --no-progress --ignore-platform-req=ext-ffi
             }
 
             if ! run_install; then
@@ -126,8 +113,8 @@ jobs:
       - name: Verify vendor exists
         working-directory: ${{ env.SUT_DIR }}
         run: |
-          docker compose exec -T laravel-api bash -lc 'test -f vendor/autoload.php && echo "vendor OK in laravel-api" || (echo "NO vendor in laravel-api"; ls -lah vendor || true)'
-          docker compose exec -T web        bash -lc 'test -f vendor/autoload.php && echo "vendor OK in web"        || (echo "NO vendor in web";        ls -lah vendor || true)'
+          docker compose exec -T laravel-api sh -c 'if [ -f vendor/autoload.php ]; then echo "vendor OK in laravel-api"; else echo "NO vendor in laravel-api"; ls -lah vendor || true; exit 2; fi'
+          docker compose exec -T web        sh -c 'if [ -f vendor/autoload.php ]; then echo "vendor OK in web";        else echo "NO vendor in web";        ls -lah vendor || true; exit 2; fi'
 
       - name: Seed database (migrate:fresh --seed) with retry
         working-directory: ${{ env.SUT_DIR }}
@@ -136,7 +123,7 @@ jobs:
           set -e
           for i in {1..10}; do
             echo "Seeding attempt $i..."
-            if docker compose exec -T laravel-api php artisan migrate:fresh --seed; then
+            if docker compose exec -T laravel-api sh -c 'php artisan migrate:fresh --seed'; then
               echo "Seed OK"
               break
             fi
@@ -149,7 +136,6 @@ jobs:
         run: |
           set -e
           npx wait-on tcp:8091
-          # Probe endpoint JSON thực tế
           for url in "$BASE_URL/products/1" "$BASE_URL/"; do
             echo "Probing $url ..."
             if npx wait-on --httpTimeout 300000 --interval 1000 "$url"; then
@@ -162,9 +148,9 @@ jobs:
 
       - name: Sanity check endpoints
         run: |
-          curl -i ${BASE_URL}/products/1 | tee reports/curl-products-1.txt
+          curl -i ${BASE_URL}/products/1 | tee ${{ github.workspace }}/reports/curl-products-1.txt
 
-      # === Postman env để chia sẻ token giữa các run (Login -> các API sau) ===
+      # ==== Newman env (share token across runs) ====
       - name: Ensure Postman environment (for token sharing)
         run: |
           mkdir -p tests
@@ -181,7 +167,7 @@ jobs:
           node -e "let f=require('./tests/environment.json'); f.values.find(v=>v.key==='baseUrl').value=process.env.BASE_URL; require('fs').writeFileSync('./tests/environment.json', JSON.stringify(f,null,2));"
           cat tests/environment.json
 
-      # === Newman: LOGIN trước (ghi token), sau đó chạy các API khác ===
+      # ==== Newman: Login trước (ghi token), rồi các API khác ====
       - name: Run Postman - Login (export token)
         continue-on-error: false
         run: |
@@ -213,21 +199,28 @@ jobs:
             --reporters cli,htmlextra \
             --reporter-htmlextra-export reports/test-report-getid.html
 
-      # === Logs & teardown ===
+      # ==== Logs & teardown ====
+      - name: Docker ps
+        if: ${{ always() }}
+        working-directory: ${{ env.SUT_DIR }}
+        run: docker compose ps
+
       - name: Docker logs (for debugging)
         if: ${{ always() }}
         working-directory: ${{ env.SUT_DIR }}
+        env:
+          LOG_OUT: ${{ github.workspace }}/reports/docker-logs.txt
         run: |
-          docker compose ps
-          docker compose logs --no-color > ../../reports/docker-logs.txt || true
+          mkdir -p "${LOG_OUT%/*}"
+          docker compose logs --no-color > "$LOG_OUT" || true
+          echo "Saved docker logs to $LOG_OUT"
 
       - name: Stop SUT
         if: ${{ always() }}
         working-directory: ${{ env.SUT_DIR }}
-        run: |
-          docker compose down -v
+        run: docker compose down -v
 
-      # === Artifacts & GitHub Pages ===
+      # ==== Artifacts & GitHub Pages ====
       - name: Upload Test Reports (Artifacts)
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
