@@ -1,4 +1,4 @@
-name: API Tests
+name: API Tests (Build, Seed, Run on 8091)
 
 on:
   push:
@@ -16,46 +16,108 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  run-api-tests:
+  e2e-api-tests:
     runs-on: ubuntu-latest
 
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
+    env:
+      # API Web (nginx/apache) được map 8091:80 trong compose
+      BASE_URL: http://localhost:8091
+      # Repo & đường dẫn sprint5-with-bugs của Toolshop
+      SUT_REPO: https://github.com/testsmith-io/practice-software-testing.git
+      SUT_DIR: sut/practice-software-testing/sprint5-with-bugs
+
     steps:
-      - name: Checkout code
+      # --- Repo hiện tại: chứa Postman collection, data, v.v. ---
+      - name: Checkout tests repo (this repo)
         uses: actions/checkout@v4
 
-      - name: Install Node.js
+      - name: Setup Node.js (for Newman & helpers)
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Install Newman
-        run: npm install -g newman newman-reporter-htmlextra
+      - name: Install CLI tools (Newman, htmlextra, wait-on)
+        run: |
+          npm i -g newman newman-reporter-htmlextra wait-on
 
-      - name: Prepare reports folder
+      - name: Create reports folder
         run: mkdir -p reports
 
-      - name: Run Postman collection - Login
-        continue-on-error: true
+      # --- Lấy & chạy SUT (Toolshop / sprint5-with-bugs) ---
+      - name: Clone Toolshop SUT
         run: |
-          newman run tests/toolshop.postman_collection.json \
-            --folder "Users - Login" \
-            --iteration-data tests/login.csv \
-            --environment tests/environment.json \
-            --export-environment tests/environment.json \
-            --reporters cli,htmlextra \
-            --reporter-htmlextra-export reports/test-report-login.html
+          mkdir -p sut
+          git clone --depth=1 "$SUT_REPO" sut/practice-software-testing
+          ls -lah sut/practice-software-testing
 
+      - name: Prepare docker compose (SUT)
+        working-directory: ${{ env.SUT_DIR }}
+        shell: bash
+        run: |
+          # Nếu có file mẫu docker-compose thì copy (không lỗi nếu thiếu)
+          cp docker-compose.example.yml docker-compose.yml 2>/dev/null || true
+          echo "=== Listing SUT dir ==="
+          ls -lah
+          echo "=== Show .env (from repo) if present ==="
+          test -f .env && sed -n '1,120p' .env || echo "WARNING: .env not found"
+
+      - name: docker compose up (build & start)
+        working-directory: ${{ env.SUT_DIR }}
+        run: |
+          docker compose up -d --build
+          docker compose ps
+
+      # (Tuỳ dự án) cài vendor PHP nếu cần — service 'composer' đã được định nghĩa trong compose của bạn
+      - name: Composer install (optional but recommended)
+        working-directory: ${{ env.SUT_DIR }}
+        run: |
+          docker compose run --rm composer || true
+
+      - name: Seed database (migrate:fresh --seed) with retry
+        working-directory: ${{ env.SUT_DIR }}
+        shell: bash
+        run: |
+          set -e
+          for i in {1..10}; do
+            echo "Seeding attempt $i..."
+            if docker compose exec -T laravel-api php artisan migrate:fresh --seed; then
+              echo "Seed OK"
+              break
+            fi
+            echo "Seed failed; wait 6s & retry..."
+            sleep 6
+          done
+
+      - name: Wait for SUT (web:8091) to be ready
+        shell: bash
+        run: |
+          set -e
+          # Đợi port mở
+          npx wait-on tcp:8091
+          # Thử lần lượt các endpoint phổ biến (tuỳ dự án bạn có thể đổi lại)
+          for url in "$BASE_URL/api/health" "$BASE_URL/api/products" "$BASE_URL/"; do
+            echo "Probing $url ..."
+            if npx wait-on --httpTimeout 300000 --interval 1000 "$url"; then
+              echo "SUT HTTP is up at: $url"
+              exit 0
+            fi
+          done
+          echo "ERROR: SUT did not become ready on expected endpoints." >&2
+          exit 1
+
+      # --- Chạy Newman (không dùng environment.json) ---
+      # Nếu collection bạn dùng URL tuyệt đối, có thể bỏ hẳn --env-var baseUrl
       - name: Run Postman collection - Product Search
         continue-on-error: true
         run: |
           newman run tests/toolshop.postman_collection.json \
             --folder "Products - Search" \
             --iteration-data tests/product_search.csv \
-            --environment tests/environment.json \
+            --env-var baseUrl=${BASE_URL} \
             --reporters cli,htmlextra \
             --reporter-htmlextra-export reports/test-report-search.html
 
@@ -65,20 +127,47 @@ jobs:
           newman run tests/toolshop.postman_collection.json \
             --folder "Products - Get by Id" \
             --iteration-data tests/product_by_id.csv \
-            --environment tests/environment.json \
+            --env-var baseUrl=${BASE_URL} \
             --reporters cli,htmlextra \
             --reporter-htmlextra-export reports/test-report-getid.html
 
-      # Artifacts để xem trong PR / Actions
+      # (Tuỳ chọn) Nếu bạn vẫn muốn giữ test Login, có thể bật block này
+      - name: Run Postman collection - Login (optional)
+        if: ${{ false }} # đổi thành true nếu muốn chạy
+        continue-on-error: true
+        run: |
+          newman run tests/toolshop.postman_collection.json \
+            --folder "Users - Login" \
+            --iteration-data tests/login.csv \
+            --env-var baseUrl=${BASE_URL} \
+            --reporters cli,htmlextra \
+            --reporter-htmlextra-export reports/test-report-login.html
+
+      # --- Logs & teardown ---
+      - name: Docker logs (for debugging)
+        if: ${{ always() }}
+        working-directory: ${{ env.SUT_DIR }}
+        run: |
+          docker compose ps
+          docker compose logs --no-color > ../../reports/docker-logs.txt || true
+
+      - name: Stop SUT
+        if: ${{ always() }}
+        working-directory: ${{ env.SUT_DIR }}
+        run: |
+          docker compose down -v
+
+      # --- Artifacts & GitHub Pages ---
       - name: Upload Test Reports (Artifacts)
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: api-test-reports
-          path: reports/*.html
+          path: |
+            reports/*.html
+            reports/*.txt
           if-no-files-found: warn
 
-      # --- Deploy GitHub Pages (chỉ khi push main) ---
       - name: Configure GitHub Pages
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/configure-pages@v5
@@ -91,8 +180,6 @@ jobs:
           mkdir -p public
           shopt -s nullglob
           cp -r reports/*.html public/ 2>/dev/null || true
-
-          # Tạo index liệt kê link tới tất cả report
           {
             echo '<html><head><meta charset="utf-8"><title>API Test Reports</title></head><body><h1>API Test Reports</h1><ul>'
             for f in public/*.html; do
@@ -101,8 +188,6 @@ jobs:
             done
             echo '</ul></body></html>'
           } > public/index.html
-
-          echo "Files to publish:"
           ls -lah public || true
 
       - name: Upload Pages artifact
