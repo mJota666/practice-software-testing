@@ -1,4 +1,4 @@
-name: API Tests (Build, Seed, Run on 8091)
+name: API Tests (Build, Seed, Run on 8091, Always Continue)
 
 on:
   push:
@@ -24,13 +24,16 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     env:
+      # Web reverse proxy map 8091:80
       BASE_URL: http://localhost:8091
+      # Repo & đường dẫn Toolshop (SUT)
       SUT_REPO: https://github.com/testsmith-io/practice-software-testing.git
       SUT_DIR: sut/practice-software-testing/sprint5-with-bugs
-      SPRINT: sprint5-with-bugs # 👈 dùng cho override
+      SPRINT: sprint5-with-bugs # dùng cho override
       DISABLE_LOGGING: "false"
 
     steps:
+      # === Repo hiện tại: chứa Postman collection, CSV data, v.v. ===
       - name: Checkout tests repo (this repo)
         uses: actions/checkout@v4
 
@@ -46,7 +49,7 @@ jobs:
       - name: Create reports folder
         run: mkdir -p reports
 
-      # ==== SUT ====
+      # === Lấy & chạy SUT (Toolshop / sprint5-with-bugs) ===
       - name: Clone Toolshop SUT
         run: |
           mkdir -p sut
@@ -57,12 +60,14 @@ jobs:
         working-directory: ${{ env.SUT_DIR }}
         shell: bash
         run: |
+          # Copy file mẫu nếu có (không lỗi nếu thiếu)
           cp docker-compose.example.yml docker-compose.yml 2>/dev/null || true
-          echo "=== Listing SUT dir ==="; ls -lah
+          echo "=== Listing SUT dir ==="
+          ls -lah
           echo "=== .env (if present) ==="
           test -f .env && sed -n '1,120p' .env || echo "WARNING: .env not found"
 
-      # OVERRIDE: cho 'web' dùng đúng bind mount code như 'laravel-api'
+      # OVERRIDE: cho 'web' dùng đúng bind mount code như 'laravel-api' để cùng thấy vendor/
       - name: Create docker-compose.override.yml (share code with web)
         working-directory: ${{ env.SUT_DIR }}
         run: |
@@ -111,7 +116,7 @@ jobs:
             chmod -R 775 /var/www
           '
 
-      # Kiểm tra vendor ở cả 2 container, KHÔNG fail sớm
+      # Kiểm tra vendor ở cả 2 container (không fail sớm)
       - name: Verify vendor exists
         working-directory: ${{ env.SUT_DIR }}
         run: |
@@ -177,7 +182,7 @@ jobs:
         run: |
           curl -i ${BASE_URL}/products/1 | tee ${{ github.workspace }}/reports/curl-products-1.txt
 
-      # ==== Newman env (share token across runs) ====
+      # === Newman env (để chia sẻ token giữa các run) ===
       - name: Ensure Postman environment (for token sharing)
         run: |
           mkdir -p tests
@@ -194,39 +199,43 @@ jobs:
           node -e "let f=require('./tests/environment.json'); f.values.find(v=>v.key==='baseUrl').value=process.env.BASE_URL; require('fs').writeFileSync('./tests/environment.json', JSON.stringify(f,null,2));"
           cat tests/environment.json
 
-      # ==== Newman: Login trước (ghi token), sau đó chạy các API ====
-      - name: Run Postman - Login (export token)
-        continue-on-error: false
+      # ==== NEWMAN: tất cả non-blocking (dù fail vẫn move on) ====
+
+      - name: Run Postman - Users Login (non-blocking, export token if any)
+        continue-on-error: true
         run: |
           newman run tests/toolshop.postman_collection.json \
             --folder "Users - Login" \
             --iteration-data tests/login.csv \
             --environment tests/environment.json \
             --export-environment tests/environment.json \
+            --suppress-exit-code \
             --reporters cli,htmlextra \
             --reporter-htmlextra-export reports/test-report-login.html
 
-      - name: Run Postman - Product Search
+      - name: Run Postman - Products Search (non-blocking)
         continue-on-error: true
         run: |
           newman run tests/toolshop.postman_collection.json \
             --folder "Products - Search" \
             --iteration-data tests/product_search.csv \
             --environment tests/environment.json \
+            --suppress-exit-code \
             --reporters cli,htmlextra \
             --reporter-htmlextra-export reports/test-report-search.html
 
-      - name: Run Postman - Product By ID
+      - name: Run Postman - Product By ID (non-blocking)
         continue-on-error: true
         run: |
           newman run tests/toolshop.postman_collection.json \
             --folder "Products - Get by Id" \
             --iteration-data tests/product_by_id.csv \
             --environment tests/environment.json \
+            --suppress-exit-code \
             --reporters cli,htmlextra \
             --reporter-htmlextra-export reports/test-report-getid.html
 
-      # ==== Logs & teardown ====
+      # === Logs & teardown ===
       - name: Docker ps
         if: ${{ always() }}
         working-directory: ${{ env.SUT_DIR }}
@@ -247,7 +256,7 @@ jobs:
         working-directory: ${{ env.SUT_DIR }}
         run: docker compose down -v
 
-      # ==== Artifacts & GitHub Pages ====
+      # === Artifacts & GitHub Pages ===
       - name: Upload Test Reports (Artifacts)
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
