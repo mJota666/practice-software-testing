@@ -24,9 +24,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     env:
-      # API Web (web service map 8091:80)
+      # Web reverse proxy map 8091:80
       BASE_URL: http://localhost:8091
-      # Repo & đường dẫn sprint5-with-bugs của Toolshop
+      # Repo & path Toolshop sprint5-with-bugs (SUT)
       SUT_REPO: https://github.com/testsmith-io/practice-software-testing.git
       SUT_DIR: sut/practice-software-testing/sprint5-with-bugs
 
@@ -58,12 +58,26 @@ jobs:
         working-directory: ${{ env.SUT_DIR }}
         shell: bash
         run: |
-          # Nếu có file mẫu docker-compose thì copy (không lỗi nếu thiếu)
+          # Copy file mẫu nếu có
           cp docker-compose.example.yml docker-compose.yml 2>/dev/null || true
           echo "=== Listing SUT dir ==="
           ls -lah
           echo "=== Show .env (from repo) if present ==="
           test -f .env && sed -n '1,120p' .env || echo "WARNING: .env not found"
+
+      # --- OVERRIDE QUAN TRỌNG: cho 'web' dùng cùng bind mount với 'laravel-api' ---
+      - name: Create docker-compose.override.yml (share code with web)
+        working-directory: ${{ env.SUT_DIR }}
+        run: |
+          cat > docker-compose.override.yml <<'YML'
+          services:
+            web:
+              volumes:
+                # Dùng cùng bind mount source code như laravel-api
+                - ./${SPRINT}/API:/var/www:cached
+          YML
+          echo "=== docker-compose.override.yml ==="
+          cat docker-compose.override.yml
 
       - name: docker compose up (build & start)
         working-directory: ${{ env.SUT_DIR }}
@@ -71,10 +85,15 @@ jobs:
           docker compose up -d --build
           docker compose ps
 
-      - name: Composer install (optional)
+      # Cài vendor cho Laravel (chạy composer)
+      - name: Composer install (populate vendor in shared bind mount)
         working-directory: ${{ env.SUT_DIR }}
         run: |
-          docker compose run --rm composer || true
+          # dùng service 'composer' đã định nghĩa; nó volumes_from: laravel-api (bind mount)
+          docker compose run --rm composer
+          # Kiểm tra vendor trong cả hai container
+          docker compose exec -T laravel-api bash -lc 'test -f vendor/autoload.php && echo "vendor OK in laravel-api" || (echo "NO vendor in laravel-api"; ls -lah)'
+          docker compose exec -T web        bash -lc 'test -f vendor/autoload.php && echo "vendor OK in web"        || (echo "NO vendor in web";        ls -lah)'
 
       - name: Seed database (migrate:fresh --seed) with retry
         working-directory: ${{ env.SUT_DIR }}
@@ -96,7 +115,7 @@ jobs:
         run: |
           set -e
           npx wait-on tcp:8091
-          # Probe một số endpoint phổ biến; chỉnh lại nếu dự án có health cụ thể
+          # Probe endpoint JSON thực tế
           for url in "$BASE_URL/products/1" "$BASE_URL/"; do
             echo "Probing $url ..."
             if npx wait-on --httpTimeout 300000 --interval 1000 "$url"; then
@@ -111,7 +130,7 @@ jobs:
         run: |
           curl -i ${BASE_URL}/products/1 | tee reports/curl-products-1.txt
 
-      # === Newman: bật Login trước, lưu token vào tests/environment.json ===
+      # === Postman env để chia sẻ token giữa các run ===
       - name: Ensure Postman environment (for token sharing)
         run: |
           mkdir -p tests
@@ -125,10 +144,10 @@ jobs:
             ]
           }
           JSON
-          # set baseUrl từ env CI
           node -e "let f=require('./tests/environment.json'); f.values.find(v=>v.key==='baseUrl').value=process.env.BASE_URL; require('fs').writeFileSync('./tests/environment.json', JSON.stringify(f,null,2));"
           cat tests/environment.json
 
+      # === Newman: LOGIN trước (ghi token), sau đó chạy các API khác ===
       - name: Run Postman - Login (export token)
         continue-on-error: false
         run: |
